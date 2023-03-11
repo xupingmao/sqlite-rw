@@ -8,6 +8,7 @@ import sqlite3
 import traceback
 import unittest
 import logging
+from sqlite_rw import _async_thread
 
 def get_db_file():
     return "./test_write.db"
@@ -57,10 +58,11 @@ def test_update():
     record = table.select_first(where = dict(name = "test"))
     assert record.age == 23
 
-class LockResult:
+class Result:
 
     def __init__(self) -> None:
         self.is_locked = False
+        self.is_executed = False
 
 def run_test_read_lock_base(read_by_write = True):
     # sqlite锁默认5秒超时
@@ -71,7 +73,7 @@ def run_test_read_lock_base(read_by_write = True):
 
     db.copy_to_read()
 
-    result = LockResult()
+    result = Result()
 
     def read_and_lock():
         if read_by_write:
@@ -122,6 +124,22 @@ class MyTest(unittest.TestCase):
         print("\n\n=== test_read_nolock")
         result = run_test_read_lock_base(read_by_write=False)
         assert result.is_locked == False
+
+
+def test_copy_cron():
+    print("\n\n=== test_copy_cron")
+    result = Result()
+
+    def test_cron_func():
+        result.is_executed = True
+
+    _async_thread.cron_interval = 0.1
+    _async_thread.put_cron_func("test", test_cron_func)
+    time.sleep(2)
+
+    assert result.is_executed
+
+    
 
 init_user_table()
 

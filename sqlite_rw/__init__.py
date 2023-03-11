@@ -3,48 +3,11 @@ import sqlite3
 import web
 import logging
 import json
-import threading
-import time
-import traceback
-from collections import deque
+from .async_task import AsyncThread
 
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s|%(levelname)s|%(filename)s:%(lineno)d|%(message)s')
-
-
-class AsyncThread(threading.Thread):
-    
-    MAX_TASK_QUEUE = 200
-    lock = threading.RLock()
-
-    def __init__(self, name="AsyncThread"):
-        super(AsyncThread, self).__init__()
-        self.setDaemon(True)
-        self.setName(name)
-        self.task_queue = deque()
-
-    def put_task(self, func, *args, **kw):
-        if len(self.task_queue) > self.MAX_TASK_QUEUE:
-            logging.error("too many log task, size: %s, max_size: %s",
-                           len(self.task_queue), self.MAX_TASK_QUEUE)
-            func(*args, **kw)
-        else:
-            self.task_queue.append([func, args, kw])
-
-    def run(self):
-        while True:
-            # queue.Queue默认是block模式
-            # 但是deque没有block模式，popleft可能抛出IndexError异常
-            try:
-                if self.task_queue:
-                    func, args, kw = self.task_queue.popleft()
-                    func(*args, **kw)
-                else:
-                    time.sleep(0.01)
-            except Exception as e:
-                exc = traceback.format_exc()
-                logging.error("execute failed, %s", exc)
 
 _async_thread = AsyncThread()
 _async_thread.daemon = True
@@ -243,6 +206,11 @@ class SqliteTable:
             self.default_db = self.read_db
 
         self.init_binlog_table(dbpath)
+        _async_thread.put_cron_func(self.dbpath, self.run_copy_cron)
+
+    def run_copy_cron(self):
+        logging.info("run_copy_cron")
+        self.copy_to_read()
 
     def copy_to_read(self):
         with AsyncThread.lock:
@@ -282,6 +250,7 @@ class SqliteTable:
             manager.add_column("data", "text", "")
 
     def _insert_binlog(self, op_type, data):
+        # TODO 考虑binlog滚动，支持无限流写入
         self.db.insert(self.binlog_table, table_name=self.tablename,
                        op_type=op_type,
                        data=json.dumps(data))
@@ -339,6 +308,7 @@ class SqliteTable:
             new_records = self.db.select(self.tablename, where = "id in $ids", vars = dict(ids = ids))
             for item in new_records:
                 self._insert_binlog(op_type="update", data = item)
+            self.copy_to_read_async()
             return update_result
 
     def delete(self, *args, **kw):
@@ -348,6 +318,7 @@ class SqliteTable:
             if len(ids) == 0:
                 return
             self._insert_binlog(op_type="delete_by_ids", data=ids)
+            self.copy_to_read_async()
             return self.db.delete(self.tablename, where="id in $ids", vars=dict(ids=ids))
 
 
