@@ -6,8 +6,7 @@ import threading
 import time
 import sqlite3
 import traceback
-import unittest
-import logging
+import termcolor
 from sqlite_rw import _async_thread
 
 def get_db_file():
@@ -63,6 +62,13 @@ class Result:
     def __init__(self) -> None:
         self.is_locked = False
         self.is_executed = False
+        self.is_read_locked = False
+
+def print_start(msg):
+    print(termcolor.colored(">>> " + msg, "cyan"))
+
+def print_end(msg):
+    print(termcolor.colored("<<< " + msg, "cyan"))
 
 def run_test_read_lock_base(read_by_write = True):
     # sqlite锁默认5秒超时
@@ -74,6 +80,7 @@ def run_test_read_lock_base(read_by_write = True):
     db.copy_to_read()
 
     result = Result()
+    result.is_read_locked = True
 
     def read_and_lock():
         if read_by_write:
@@ -105,25 +112,36 @@ def run_test_read_lock_base(read_by_write = True):
             if "database is locked" in str(e):
                 result.is_locked = True
         print("<<< commit transaction for write")
+    
+    def read_no_wait():
+        time.sleep(0.5) # 等待读操作先执行
+        print_start("begin transaction for read_no_wait")
+        read_db = get_table(timeout=1)
+        for item in read_db.select(where = "name like $name", vars = dict(name = "test%")):
+            print("read_no_wait:", item)
+        print_end("commit transaction for read_no_wait")
+        result.is_read_locked = False
 
     t1 = start_new_thread(read_and_lock)
     t2 = start_new_thread(write_and_lock)
+    t3 = start_new_thread(read_no_wait)
     t1.join()
     t2.join()
+    t3.join()
 
+    assert result.is_read_locked == False # read之间是可以并发的
     return result
 
-class MyTest(unittest.TestCase):
 
-    def test_read_locked(self):
-        print("\n\n=== test_read_locked")
-        result = run_test_read_lock_base(read_by_write=True)
-        assert result.is_locked == True
+def test_read_locked():
+    print("\n\n=== test_read_locked")
+    result = run_test_read_lock_base(read_by_write=True)
+    assert result.is_locked == True
 
-    def test_read_nolock(self):
-        print("\n\n=== test_read_nolock")
-        result = run_test_read_lock_base(read_by_write=False)
-        assert result.is_locked == False
+def test_read_nolock():
+    print("\n\n=== test_read_nolock")
+    result = run_test_read_lock_base(read_by_write=False)
+    assert result.is_locked == False
 
 
 def test_copy_cron():
