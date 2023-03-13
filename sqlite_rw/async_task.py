@@ -14,8 +14,8 @@ class AsyncThread(threading.Thread):
 
     def __init__(self, name="AsyncThread"):
         super(AsyncThread, self).__init__()
-        self.setDaemon(True)
-        self.setName(name)
+        self.daemon = True
+        self.name = name
         self.task_queue = deque()
         self.cron_func_dict = dict()
 
