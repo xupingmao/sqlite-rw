@@ -5,12 +5,14 @@ import logging
 import json
 from .async_task import AsyncThread
 
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s|%(levelname)s|%(filename)s:%(lineno)d|%(message)s')
+
+logger = logging.getLogger("sqlite-rw")
+
+# logging.basicConfig(
+#     level=logging.DEBUG,
+#     format='%(asctime)s|%(levelname)s|%(filename)s:%(lineno)d|%(message)s')
 
 _async_thread = AsyncThread()
-_async_thread.daemon = True
 _async_thread.start()
 
 def async_func_deco():
@@ -75,7 +77,7 @@ class SqliteTableManager:
         cursorobj = db.cursor()
         try:
             if not silent:
-                logging.info(sql)
+                logger.info(sql)
             cursorobj.execute(sql)
             kv_result = []
             result = cursorobj.fetchall()
@@ -143,14 +145,14 @@ class SqliteTableManager:
         try:
             self.execute_write_and_read(sql)
         except Exception as e:
-            logging.error("sql:%s, err:%s", sql, e)
+            logger.error("sql:%s, err:%s", sql, e)
 
     def drop_index(self, col_name):
         sql = "DROP INDEX idx_%s_%s" % (self.tablename, col_name)
         try:
             self.execute_write_and_read(sql)
         except Exception as e:
-            logging.error("sql:%s, err:%s", sql, e)
+            logger.error("sql:%s, err:%s", sql, e)
 
     def drop_column(self, colname):
         # sql = "ALTER TABLE `%s` DROP COLUMN `%s`" % (self.tablename, colname)
@@ -209,7 +211,7 @@ class SqliteTable:
         _async_thread.put_cron_func(self.dbpath, self.run_copy_cron)
 
     def run_copy_cron(self):
-        logging.info("run_copy_cron")
+        logger.info("run_copy_cron")
         self.copy_to_read()
 
     def copy_to_read(self):
@@ -237,7 +239,7 @@ class SqliteTable:
                     
                     db.delete(self.binlog_table, where=dict(id=record.id))
             except sqlite3.OperationalError as e:
-                logging.error("copy_to_read failed, err:%s", e)
+                logger.error("copy_to_read failed, err:%s", e)
 
     @async_func_deco()
     def copy_to_read_async(self):

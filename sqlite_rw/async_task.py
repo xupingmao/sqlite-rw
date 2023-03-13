@@ -14,7 +14,7 @@ class AsyncThread(threading.Thread):
 
     def __init__(self, name="AsyncThread"):
         super(AsyncThread, self).__init__()
-        self.daemon = True
+        self.daemon = True # 设置为守护线程，不阻塞进程退出
         self.name = name
         self.task_queue = deque()
         self.cron_func_dict = dict()
