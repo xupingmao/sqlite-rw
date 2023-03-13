@@ -1,3 +1,6 @@
 test_read.db
 test_write.db
 *.pyc
+build/
+dist/
+sqlite_rw.egg-info/
