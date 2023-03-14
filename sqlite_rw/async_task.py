@@ -9,7 +9,6 @@ from collections import deque
 class AsyncThread(threading.Thread):
     
     MAX_TASK_QUEUE = 200
-    lock = threading.RLock()
     cron_interval = 5 # cron函数运行的间隔
 
     def __init__(self, name="AsyncThread"):

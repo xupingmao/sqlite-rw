@@ -1,6 +1,6 @@
 from __future__ import absolute_import
 import sys
-sys.path.append("./")
+sys.path.insert(0, "./")
 import sqlite_rw
 import threading
 import time

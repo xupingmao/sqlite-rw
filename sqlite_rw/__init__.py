@@ -3,6 +3,7 @@ import sqlite3
 import web
 import logging
 import json
+import threading
 from .async_task import AsyncThread
 
 
@@ -22,6 +23,14 @@ def async_func_deco():
             _async_thread.put_task(func, *args, **kw)
         return handle
     return deco
+
+class LockManager:
+
+    lock = threading.RLock()
+
+    @classmethod
+    def get_lock(cls, dbpath=""):
+        return cls.lock
 
 class SqliteTableManager:
     """检查数据库字段，如果不存在就自动创建"""
@@ -215,10 +224,10 @@ class SqliteTable:
         self.copy_to_read()
 
     def copy_to_read(self):
-        with AsyncThread.lock:
+        with LockManager.get_lock(self.dbpath):
             try:
-                db = web.db.SqliteDB(db = self.dbpath, timeout = 1)
-                read_db = web.db.SqliteDB(db = self.read_db_path, timeout = 1)
+                db = self.db
+                read_db = self.read_db
                 records = list(db.select(self.binlog_table, limit = 10, order = "id"))
 
                 for record in records:
@@ -228,7 +237,11 @@ class SqliteTable:
                     data = json.loads(data_str)
 
                     if op_type == "insert":
-                        read_db.insert(tablename, **data)
+                        # 由于是两个独立的db, 这里可能会重复执行，所以要判断下数据是否已经插入
+                        data_id = data.get("id")
+                        check_old = read_db.select(tablename, where = dict(id=data_id)).first()
+                        if check_old == None:
+                            read_db.insert(tablename, **data)
                     elif op_type == "update":
                         data_id = data.get("id")
                         read_db.update(tablename, where = dict(id=data_id), **data)
@@ -258,13 +271,14 @@ class SqliteTable:
                        data=json.dumps(data))
 
     def insert(self, *args, **kw):
-        with self.db.transaction():
-            insert_id = self.db.insert(self.tablename, *args, **kw)
-            insert_value = self.db.select(
-                self.tablename, where=dict(id=insert_id)).first()
-            self._insert_binlog(op_type="insert", data=insert_value)
-            self.copy_to_read_async()
-            return insert_id
+        with LockManager.get_lock(self.dbpath):
+            with self.db.transaction():
+                insert_id = self.db.insert(self.tablename, *args, **kw)
+                insert_value = self.db.select(
+                    self.tablename, where=dict(id=insert_id)).first()
+                self._insert_binlog(op_type="insert", data=insert_value)
+                self.copy_to_read_async()
+                return insert_id
 
     def select(self, *args, **kw):
         return self.default_db.select(self.tablename, *args, **kw)
@@ -301,27 +315,32 @@ class SqliteTable:
         return self._count(self.db, where, sql, vars)
 
     def update(self, where, vars=None, _test=False, **values):
-        with self.db.transaction():
-            ids_results = self.db.select(self.tablename, what="id", where = where, vars = vars, _test = _test)
-            ids = list(map(lambda x:x.id, ids_results))
-            if len(ids) == 0:
-                return
-            update_result = self.db.update(self.tablename, where, vars, _test, **values)
-            new_records = self.db.select(self.tablename, where = "id in $ids", vars = dict(ids = ids))
-            for item in new_records:
-                self._insert_binlog(op_type="update", data = item)
-            self.copy_to_read_async()
-            return update_result
+        with LockManager.get_lock(self.dbpath):
+            with self.db.transaction():
+                ids_results = self.db.select(self.tablename, what="id", where = where, vars = vars, _test = _test)
+                ids = list(map(lambda x:x.id, ids_results))
+                if len(ids) == 0:
+                    return
+                update_result = self.db.update(self.tablename, where, vars, _test, **values)
+                new_records = self.db.select(self.tablename, where = "id in $ids", vars = dict(ids = ids))
+                for item in new_records:
+                    self._insert_binlog(op_type="update", data = item)
+                self.copy_to_read_async()
+                return update_result
 
     def delete(self, *args, **kw):
-        with self.db.transaction():
-            ids_results = self.db.select(self.tablename, what="id", *args, **kw)
-            ids = list(map(lambda x:x.id, ids_results))
-            if len(ids) == 0:
-                return
-            self._insert_binlog(op_type="delete_by_ids", data=ids)
-            self.copy_to_read_async()
-            return self.db.delete(self.tablename, where="id in $ids", vars=dict(ids=ids))
+        with LockManager.get_lock(self.dbpath):
+            with self.db.transaction():
+                ids_results = self.db.select(self.tablename, what="id", *args, **kw)
+                ids = list(map(lambda x:x.id, ids_results))
+                if len(ids) == 0:
+                    return
+                self._insert_binlog(op_type="delete_by_ids", data=ids)
+                self.copy_to_read_async()
+                return self.db.delete(self.tablename, where="id in $ids", vars=dict(ids=ids))
+    
+    def transaction(self):
+        return self.db.transaction()
 
 
 TableManager = SqliteTableManager
